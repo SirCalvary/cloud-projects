@@ -1,0 +1,139 @@
+in this hands on projects i am going to implement a simple serverless application making use of s3, API gateway, Step Functions, SNS & SES
+
+firstly i configured a simple Email service using my mail by creating an identity on AWS SES and verified my mail upon the creation of the identity followed by refreshing the page so that it shows on the console as verified
+
+The next stage would require setting up a lambda execution role that allows it interact with the simple email service by using a cloud formation template that already has the lambda role in it which would take some minutes and the link to an easy stak creation ishttps://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https://learn-cantrill-labs.s3.amazonaws.com/aws-serverless-pet-cuddle-o-tron/lambdarolecfn.yaml&stackName=LAMBDAROLE 
+
+following the creation of the stack on cloud formation, i would then move to IAM to cross check the role and ensure that it contains the necessary permissions to make it work
+
+once every permission has been confirmed and the role can execute permissions such as interacting with SES and SNS and also sending of logs to cloudwatch the next stage includes creating a lambda email reminder function
+
+after selecting the name of the function, i went ahead and chose python as its runtime and then clicked on the "change execution role" and selected the iam role that i created through that link above and i finally created the lambda function
+
+once the lambda is up and running, i firstly cleared the code written there and inputed a new code that contains my email and deployed the new changes, the new code is import boto3, os, json
+
+FROM_EMAIL_ADDRESS = 'REPLACE_ME'
+
+ses = boto3.client('ses')
+
+def lambda_handler(event, context):
+    # Print event data to logs .. 
+    print("Received event: " + json.dumps(event))
+    # Publish message directly to email, provided by EmailOnly or EmailPar TASK
+    ses.send_email( Source=FROM_EMAIL_ADDRESS,
+        Destination={ 'ToAddresses': [ event['Input']['email'] ] }, 
+        Message={ 'Subject': {'Data': 'Whiskers Commands You to attend!'},
+            'Body': {'Text': {'Data': event['Input']['message']}}
+        }
+    )
+    return 'Success!'
+    finally i copied the ARN number thats unique to me and saved it in my notepad
+    
+    The next stage in this project involves creating a state machine that pulls for request at intervals using lambda and sending an email notificatiob of success and the first stage of doing this is to create a role that allows the state machine to work, and in a simpler format, i used this link to create the role faster https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https://learn-cantrill-labs.s3.amazonaws.com/aws-serverless-pet-cuddle-o-tron/statemachinerole.yaml&stackName=StateMachineRole
+    
+    After the creation of the roles, which could take a while, i then moved back to my IAM console to ensure that the new role has all the necessary permission it needs to function
+    
+    thyen when it has all the necessary permissions to work and interact with lambda and SES, i would now select Step functions under aws services and create a state machine that would be edited using code while also selecting standard, and i opened a json file containing the set of code that i will be using for this hands on
+    
+{
+  "Comment": "Pet Cuddle-o-Tron - using Lambda for email.",
+  "StartAt": "Timer",
+  "States": {
+    "Timer": {
+      "Type": "Wait",
+      "SecondsPath": "$.waitSeconds",
+      "Next": "Email"
+    },
+    "Email": {
+      "Type" : "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "EMAIL_LAMBDA_ARN",
+        "Payload": {
+          "Input.$": "$"
+        }
+      },
+      "Next": "NextState"
+    },
+    "NextState": {
+      "Type": "Pass",
+      "End": true
+    }
+  }
+}
+
+
+after inputing the code, i selected next and then ensured the roles were selected and deployed my state machine
+
+then after i created an api gateway to have an endpoint that my client application can interact with, but beforr creating the api gateway, i would firstly create another lambda function that would interact with it and also ensure i select an execution role that would make it possible for lammbda to not lack any needed permissions
+
+then i would replace the entire python code with a code specified for this hands on project
+
+# This code is a bit ...messy and includes some workarounds
+# It functions fine, but needs some cleanup
+# Checked the DecimalEncoder and Checks workarounds 20200402 and no progression towards fix
+
+import boto3, json, os, decimal
+
+SM_ARN = 'YOUR_STATEMACHINE_ARN'
+
+sm = boto3.client('stepfunctions')
+
+def lambda_handler(event, context):
+    # Print event data to logs .. 
+    print("Received event: " + json.dumps(event))
+
+    # Load data coming from APIGateway
+    data = json.loads(event['body'])
+    data['waitSeconds'] = int(data['waitSeconds'])
+    
+    # Sanity check that all of the parameters we need have come through from API gateway
+    # Mixture of optional and mandatory ones
+    checks = []
+    checks.append('waitSeconds' in data)
+    checks.append(type(data['waitSeconds']) == int)
+    checks.append('message' in data)
+
+    # if any checks fail, return error to API Gateway to return to client
+    if False in checks:
+        response = {
+            "statusCode": 400,
+            "headers": {"Access-Control-Allow-Origin":"*"},
+            "body": json.dumps( { "Status": "Success", "Reason": "Input failed validation" }, cls=DecimalEncoder )
+        }
+    # If none, start the state machine execution and inform client of 2XX success :)
+    else: 
+        sm.start_execution( stateMachineArn=SM_ARN, input=json.dumps(data, cls=DecimalEncoder) )
+        response = {
+            "statusCode": 200,
+            "headers": {"Access-Control-Allow-Origin":"*"},
+            "body": json.dumps( {"Status": "Success"}, cls=DecimalEncoder )
+        }
+    return response
+
+# This is a workaround for: http://bugs.python.org/issue16535
+# Solution discussed on this thread https://stackoverflow.com/questions/11942364/typeerror-integer-is-not-json-serializable-when-serializing-json-in-python
+# https://stackoverflow.com/questions/1960516/python-json-serialize-a-decimal-object
+# Credit goes to the group :)
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return int(obj)
+        return super(DecimalEncoder, self).default(obj)
+        
+        after doing this, the next stage would be to create the api gateway that would invoke the lambda function
+        
+        for this hands on, i created a rest api that clients would be able to interact with
+        after creating a rest api and selecting regional scope for it, i created a resource which would be interacted with the api, then after creating the resoyurce, i created a post action under the resource and selected lambda function fr the integration ype
+        and selecting 'use lambda proxy integration' so as there are no issues
+    finally the api gateway is ready, and now i clicked on actions and deployed the API gateway, and copying the url for the api gateway
+    
+    now that the api gateqay is ready, the next stge is creating an s3 bucket for a serverless and static website
+    
+    while creating the bucket, i ensured that it is publicly accesible and after creating it, i eduted the bucket policy to make access to it public
+    
+    after that, you upload the files needed for the s3 bucket which is in https://learn-cantrill-labs.s3.amazonaws.com/aws-serverless-pet-cuddle-o-tron/serverless_frontend.zip
+    and then edit the JS file and add the url link for the api gateway in the editor and save and then upload it all in the s3 bucket
+    after uploading all of the files, then you can open the page and it will load the websitr
+ 
+ ONCE the site starts loading, you can input your command on the website which would then be sent to your mail while it is logged on the step function and also logs would be saved to cloud watch
